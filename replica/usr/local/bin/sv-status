@@ -1,0 +1,14 @@
+#!/bin/bash
+# DESC: shows enabled and running systemd services
+
+echo "SYSTEMD SERVICE STATUS"
+echo "----------------------"
+
+echo
+echo "Enabled services:"
+systemctl list-unit-files --type=service --state=enabled --no-pager
+
+echo
+echo "Running services:"
+systemctl list-units --type=service --state=running --no-pager
+
