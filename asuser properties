@@ -1,0 +1,16 @@
+asuser enables peer-to-peer delegated execution:
+
+You stay logged in as yourself
+
+A command runs as another non-root user
+
+Only single commands
+
+Consent is proven by target user’s password
+
+No shells, no sudo replacement, no root delegation
+
+Full transparency and per-user audit logs
+
+
+just a learning experience not a replacement of any existing tool
