@@ -1,4 +1,0 @@
-#!/bin/bash
-# DESC: reboot
-echo "BORN AGAIN!!"
-systemctl reboot

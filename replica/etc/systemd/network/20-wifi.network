@@ -1,0 +1,6 @@
+[Match]
+Name=wlo*
+
+[Network]
+DHCP=yes
+

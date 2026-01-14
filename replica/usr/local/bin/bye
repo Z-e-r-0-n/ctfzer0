@@ -1,4 +1,0 @@
-#!/bin/bash
-# DESC: shutdown
-echo "bye $(whoami)"
-systemctl poweroff
