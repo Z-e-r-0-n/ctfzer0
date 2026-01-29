@@ -1,0 +1,22 @@
+#!/bin/bash
+
+# DESC: shows high-level system status (uptime, load, memory, disk)
+
+echo "SYSTEM STATUS"
+echo "-------------"
+
+echo "uptime:"
+uptime -p
+echo
+
+echo
+echo "Logged-in users:"
+who
+echo
+
+echo "memory:"
+free -h
+echo
+
+echo "Load:"
+uptime | awk -F'load average: ' '{ print $2 }'
