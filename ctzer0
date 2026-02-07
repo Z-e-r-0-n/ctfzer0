@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+import os
+import subprocess
+import glob
+import shutil
+import time
+
+# --- CONSTANTS ---
+INTENT_DIR = "/etc/net/interfaces"
+GLOBAL_CONF = "/etc/net/global.conf"
+
+SYSTEMD_NET_DIR = "/etc/systemd/network"
+WPA_SUPPLICANT_DIR = "/etc/wpa_supplicant"
+HOSTAPD_CONF_DIR = "/etc/hostapd"
+DNSMASQ_CONF_DIR = "/etc/dnsmasq.d"
+
+# Helper to write files
+def write_file(path, content):
+    with open(path, "w") as f:
+        f.write(content)
+    os.chmod(path, 0o600) # Secure credentials
+
+def run(cmd):
+    subprocess.run(cmd, shell=True, check=False)
+
+def clean_slate():
+    """Wipes generated configs to ensure fresh state based on intent."""
+    print("[*] Cleaning old configurations...")
+    # Clean systemd-networkd
+    for f in glob.glob(f"{SYSTEMD_NET_DIR}/*-enforced.network"):
+        os.remove(f)
+    
+    # Clean hostapd (stop service first)
+    run("systemctl stop hostapd")
+    run("systemctl stop dnsmasq")
+    for f in glob.glob(f"{HOSTAPD_CONF_DIR}/*.conf"):
+        os.remove(f)
+        
+    # Clean dnsmasq
+    for f in glob.glob(f"{DNSMASQ_CONF_DIR}/*.conf"):
+        os.remove(f)
+
+    # Stop specific wpa_supplicants
+    run("pkill wpa_supplicant")
+
+def parse_intent(path):
+    config = {}
+    if not os.path.exists(path): return config
+    with open(path) as f:
+        for line in f:
+            if "=" in line:
+                k, v = line.strip().split("=", 1)
+                config[k] = v
+    return config
+
+def apply_global():
+    print("[*] Applying Global Settings...")
+    forward = "0"
+    if os.path.exists(GLOBAL_CONF):
+        with open(GLOBAL_CONF) as f:
+            if "ip_forward=1" in f.read():
+                forward = "1"
+    
+    # Apply Sysctl
+    run(f"sysctl -w net.ipv4.ip_forward={forward}")
+    
+    # Basic NAT (Masquerade) if forwarding is on
+    # Flushes NAT table and adds masquerade rule for traffic leaving uplink
+    # Note: Requires identifying the uplink. We do that in the main loop.
+    return forward == "1"
+
+def generate_subnet(index):
+    """Generates a unique subnet based on an index (10.0.X.1)."""
+    return f"10.0.{50 + index}.1"
+
+def main():
+    clean_slate()
+    ip_forwarding_enabled = apply_global()
+    
+    intent_files = glob.glob(f"{INTENT_DIR}/*.conf")
+    uplink_iface = None
+    
+    # --- PHASE 1: PROCESS UPLINKS ---
+    for fpath in intent_files:
+        iface = os.path.basename(fpath).replace(".conf", "")
+        cfg = parse_intent(fpath)
+        
+        if cfg.get("role") == "uplink":
+            uplink_iface = iface
+            print(f"[+] Configuring {iface} as UPLINK")
+            
+            # 1. Systemd Network file
+            net_content = f"""[Match]
+Name={iface}
+
+[Network]
+DHCP=yes
+"""
+            write_file(f"{SYSTEMD_NET_DIR}/10-{iface}-uplink-enforced.network", net_content)
+            
+            # 2. WiFi Supplicant (if SSID provided)
+            if "ssid" in cfg:
+                wpa_content = f"""ctrl_interface=/run/wpa_supplicant
+update_config=1
+country=IN
+
+network={{
+    ssid="{cfg['ssid']}"
+    psk="{cfg['psk']}"
+}}
+"""
+                write_file(f"{WPA_SUPPLICANT_DIR}/wpa_supplicant-{iface}.conf", wpa_content)
+                # Enable/Start specific wpa service
+                run(f"systemctl enable wpa_supplicant@{iface}")
+                run(f"systemctl restart wpa_supplicant@{iface}")
+
+    # --- PHASE 2: PROCESS DOWNLINKS ---
+    downlink_index = 0
+    for fpath in intent_files:
+        iface = os.path.basename(fpath).replace(".conf", "")
+        cfg = parse_intent(fpath)
+        
+        if cfg.get("role") == "downlink":
+            print(f"[+] Configuring {iface} as DOWNLINK")
+            
+            # Assign Subnet (e.g., 10.0.50.1, 10.0.51.1)
+            gw_ip = generate_subnet(downlink_index)
+            dhcp_range = f"{gw_ip.rsplit('.', 1)[0]}.10,{gw_ip.rsplit('.', 1)[0]}.100,12h"
+            downlink_index += 1
+            
+            # 1. Systemd Network file (Static IP)
+            net_content = f"""[Match]
+Name={iface}
+
+[Network]
+Address={gw_ip}/24
+IPMasquerade=yes
+DHCPServer=no
+"""
+            write_file(f"{SYSTEMD_NET_DIR}/20-{iface}-downlink-enforced.network", net_content)
+            
+            # 2. Hostapd Config (if WiFi)
+            if "ssid" in cfg:
+                hostapd_conf = f"{HOSTAPD_CONF_DIR}/{iface}.conf"
+                hostapd_content = f"""interface={iface}
+driver=nl80211
+ssid={cfg['ssid']}
+hw_mode=g
+channel=7
+wmm_enabled=0
+macaddr_acl=0
+auth_algs=1
+ignore_broadcast_ssid=0
+wpa=2
+wpa_passphrase={cfg['psk']}
+wpa_key_mgmt=WPA-PSK
+wpa_pairwise=TKIP
+rsn_pairwise=CCMP
+"""
+                write_file(hostapd_conf, hostapd_content)
+                # We need to create a service override or just run it via a wrapper
+                # For simplicity in this custom distro, we will run a specific instance
+                # But proper way is creating a systemd template or just launching it:
+                run(f"systemctl unmask hostapd")
+                # We overwrite the default /etc/hostapd/hostapd.conf to point to this interface? 
+                # Better: Run it as a transient service or background process for now
+                # Or use the DAEMON_CONF in /etc/default/hostapd if standard debian
+                
+                # Setup simple systemd override to point to this file
+                # For this specific implementation, we will rely on a custom unit or just start it
+                # Quick hack for stability:
+                run(f"hostapd -B {hostapd_conf}") 
+
+            # 3. Dnsmasq Config
+            dnsmasq_content = f"""interface={iface}
+dhcp-range={dhcp_range}
+dhcp-option=3,{gw_ip}
+dhcp-option=6,8.8.8.8,1.1.1.1
+"""
+            write_file(f"{DNSMASQ_CONF_DIR}/{iface}.conf", dnsmasq_content)
+
+    # --- PHASE 3: APPLY & RESTART ---
+    print("[*] Reloading systemd-networkd...")
+    run("systemctl daemon-reload")
+    run("networkctl reload")
+    
+    if downlink_index > 0:
+        print("[*] Starting DNS/DHCP services...")
+        run("systemctl restart dnsmasq")
+        
+    if ip_forwarding_enabled and uplink_iface:
+        print(f"[*] Enabling NAT through {uplink_iface}...")
+        run(f"iptables -t nat -A POSTROUTING -o {uplink_iface} -j MASQUERADE")
+        # Save iptables so they persist (optional, requires iptables-persistent)
+        # run("netfilter-persistent save")
+
+if __name__ == "__main__":
+    if os.geteuid() != 0:
+        print("Run as root.")
+        exit(1)
+    main()

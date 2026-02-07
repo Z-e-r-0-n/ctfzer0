@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+import os
+import subprocess
+import sys
+
+# Configuration
+INTENT_DIR = "/etc/net/interfaces"
+GLOBAL_CONF = "/etc/net/global.conf"
+ENFORCE_SCRIPT = "/usr/lib/net/enforce.py"
+
+def run_command(cmd):
+    try:
+        return subprocess.check_output(cmd, shell=True, text=True).strip()
+    except subprocess.CalledProcessError:
+        return None
+
+def get_interfaces():
+    # Get all physical interfaces excluding lo
+    raw = run_command("ip -o link show | awk -F': ' '{print $2}'")
+    if not raw: return []
+    return [i for i in raw.split('\n') if i != "lo"]
+
+def scan_wifi(iface):
+    print(f"[*] Scanning WiFi on {iface} (this may take a few seconds)...")
+    # Bring interface up for scanning
+    run_command(f"ip link set {iface} up")
+    
+    # Using iwlist for simpler parsing, fallback to visual scan
+    try:
+        raw = run_command(f"iwlist {iface} scan | grep ESSID")
+        ssids = []
+        if raw:
+            for line in raw.split('\n'):
+                if 'ESSID:' in line:
+                    ssid = line.split('ESSID:')[1].strip('"')
+                    if ssid and ssid not in ssids:
+                        ssids.append(ssid)
+        return ssids
+    except:
+        print("Scan failed. Ensure 'wireless-tools' is installed.")
+        return []
+
+def configure_interface():
+    interfaces = get_interfaces()
+    print("\n--- Available Interfaces ---")
+    for idx, iface in enumerate(interfaces):
+        print(f"{idx + 1}. {iface}")
+    
+    try:
+        choice = int(input("\nSelect interface number: ")) - 1
+        iface = interfaces[choice]
+    except (ValueError, IndexError):
+        print("Invalid selection.")
+        return
+
+    print(f"\n--- Configuring {iface} ---")
+    print("1. Uplink (Connect to Internet/WiFi)")
+    print("2. Downlink (Create Hotspot/Local Network)")
+    print("3. Clear Configuration")
+    
+    role_choice = input("Select role (1/2/3): ").strip()
+    
+    config = {}
+    
+    if role_choice == '1': # Uplink
+        config['role'] = 'uplink'
+        is_wifi = input("Is this a WiFi interface? (y/n): ").lower() == 'y'
+        
+        if is_wifi:
+            scan = input("Scan for networks? (y/n): ").lower() == 'y'
+            ssid = ""
+            if scan:
+                ssids = scan_wifi(iface)
+                if not ssids:
+                    print("No networks found.")
+                    ssid = input("Enter SSID manually: ")
+                else:
+                    print("\n--- Detected Networks ---")
+                    for idx, s in enumerate(ssids):
+                        print(f"{idx + 1}. {s}")
+                    s_choice = input("Select network or enter manual (m): ")
+                    if s_choice == 'm':
+                        ssid = input("Enter SSID: ")
+                    else:
+                        try:
+                            ssid = ssids[int(s_choice)-1]
+                        except:
+                            ssid = input("Enter SSID: ")
+            else:
+                ssid = input("Enter SSID: ")
+            
+            psk = input("Enter WiFi Password: ")
+            config['ssid'] = ssid
+            config['psk'] = psk
+            
+    elif role_choice == '2': # Downlink
+        config['role'] = 'downlink'
+        print(f"\n--- Hotspot Configuration for {iface} ---")
+        config['ssid'] = input("Set Hotspot Name (SSID): ")
+        config['psk'] = input("Set Hotspot Password (min 8 chars): ")
+        # Auto-assign subnet based on interface name hash or simple logic could go here
+        # For now, enforce.py will handle the subnet logic to keep UI simple
+        
+    elif role_choice == '3': # Clear
+        path = os.path.join(INTENT_DIR, f"{iface}.conf")
+        if os.path.exists(path):
+            os.remove(path)
+            print(f"Configuration for {iface} cleared.")
+        return
+
+    # Write Config
+    if not os.path.exists(INTENT_DIR):
+        os.makedirs(INTENT_DIR)
+        
+    with open(os.path.join(INTENT_DIR, f"{iface}.conf"), "w") as f:
+        for k, v in config.items():
+            f.write(f"{k}={v}\n")
+    
+    print(f"\nConfiguration saved to {INTENT_DIR}/{iface}.conf")
+    
+    apply = input("Apply changes now? (This will restart network services) (y/n): ").lower() == 'y'
+    if apply:
+        print("Running Enforce Script...")
+        subprocess.run([sys.executable, ENFORCE_SCRIPT])
+
+def configure_global():
+    print("\n--- Global Settings ---")
+    current_fw = "0"
+    if os.path.exists(GLOBAL_CONF):
+        with open(GLOBAL_CONF) as f:
+            if "ip_forward=1" in f.read():
+                current_fw = "1"
+    
+    print(f"Current IP Forwarding: {'Enabled' if current_fw=='1' else 'Disabled'}")
+    new_fw = input("Enable IP Forwarding (needed for hotspots)? (y/n): ").lower()
+    
+    with open(GLOBAL_CONF, "w") as f:
+        if new_fw == 'y':
+            f.write("ip_forward=1\n")
+        else:
+            f.write("ip_forward=0\n")
+            
+    print("Global settings saved.")
+
+def main():
+    while True:
+        print("\n=== Debian Custom Net Manager ===")
+        print("1. Configure Interface (Uplink/Downlink)")
+        print("2. Global Settings")
+        print("3. Apply & Exit")
+        
+        c = input("Choice: ")
+        if c == '1': configure_interface()
+        elif c == '2': configure_global()
+        elif c == '3':
+            print("Applying changes...")
+            subprocess.run([sys.executable, ENFORCE_SCRIPT])
+            break
+
+if __name__ == "__main__":
+    if os.geteuid() != 0:
+        print("Run as root.")
+        sys.exit(1)
+    main()
