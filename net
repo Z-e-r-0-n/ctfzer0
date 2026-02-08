@@ -3,7 +3,7 @@ import os
 import subprocess
 import sys
 
-# Configuration
+
 INTENT_DIR = "/etc/net/interfaces"
 GLOBAL_CONF = "/etc/net/global.conf"
 ENFORCE_SCRIPT = "/usr/lib/net/enforce.py"
@@ -15,17 +15,16 @@ def run_command(cmd):
         return None
 
 def get_interfaces():
-    # Get all physical interfaces excluding lo
+    
     raw = run_command("ip -o link show | awk -F': ' '{print $2}'")
     if not raw: return []
     return [i for i in raw.split('\n') if i != "lo"]
 
 def scan_wifi(iface):
     print(f"[*] Scanning WiFi on {iface} (this may take a few seconds)...")
-    # Bring interface up for scanning
+    
     run_command(f"ip link set {iface} up")
     
-    # Using iwlist for simpler parsing, fallback to visual scan
     try:
         raw = run_command(f"iwlist {iface} scan | grep ESSID")
         ssids = []
@@ -56,15 +55,16 @@ def configure_interface():
     print(f"\n--- Configuring {iface} ---")
     print("1. Uplink (Connect to Internet/WiFi)")
     print("2. Downlink (Create Hotspot/Local Network)")
-    print("3. Clear Configuration")
+    print("3. Promiscous mode")
+    print("4. Clear Configuration")
     
-    role_choice = input("Select role (1/2/3): ").strip()
+    role_choice = input("Select role (1/2/3/4): ").strip()
     
     config = {}
     
-    if role_choice == '1': # Uplink
+    if role_choice == '1': 
         config['role'] = 'uplink'
-        is_wifi = input("Is this a WiFi interface? (y/n): ").lower() == 'y'
+        is_wifi = input("Is this a Wireless interface? (y/n): ").lower() == 'y'
         
         if is_wifi:
             scan = input("Scan for networks? (y/n): ").lower() == 'y'
@@ -98,10 +98,11 @@ def configure_interface():
         print(f"\n--- Hotspot Configuration for {iface} ---")
         config['ssid'] = input("Set Hotspot Name (SSID): ")
         config['psk'] = input("Set Hotspot Password (min 8 chars): ")
-        # Auto-assign subnet based on interface name hash or simple logic could go here
-        # For now, enforce.py will handle the subnet logic to keep UI simple
         
-    elif role_choice == '3': # Clear
+    elif role_choice == "3":
+        config['role']= "promiscous"
+
+    elif role_choice == '4': # Clear
         path = os.path.join(INTENT_DIR, f"{iface}.conf")
         if os.path.exists(path):
             os.remove(path)
