@@ -2,8 +2,7 @@
 import os
 import subprocess
 import glob
-import shutil
-import time
+
 
 INTENT_DIR = "/etc/net/interfaces"
 GLOBAL_CONF = "/etc/net/global.conf"
@@ -113,19 +112,6 @@ network={{
                 write_file(f"{WPA_SUPPLICANT_DIR}/wpa_supplicant-{iface}.conf", wpa_content)
                 run(f"systemctl enable wpa_supplicant@{iface}")
                 run(f"systemctl restart wpa_supplicant@{iface}")
-
-       
-        elif role == "promiscous" or role == "monitor":
-            print(f"[+] Configuring {iface} as MONITOR/PROMISC")
-            
-            
-            net_content = f"""[Match]
-Name={iface}
-
-[Link]
-Unmanaged=yes
-"""
-            write_file(f"{SYSTEMD_NET_DIR}/90-{iface}-monitor-enforced.network", net_content)
             
            
             if role == "monitor":

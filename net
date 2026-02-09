@@ -109,7 +109,7 @@ def configure_interface():
             print(f"Configuration for {iface} cleared.")
         return
 
-    # Write Config
+    
     if not os.path.exists(INTENT_DIR):
         os.makedirs(INTENT_DIR)
         
@@ -145,17 +145,15 @@ def configure_global():
 
 def main():
     while True:
-        print("\n=== Debian Custom Net Manager ===")
+        print("\n===Network Manager===")
         print("1. Configure Interface (Uplink/Downlink)")
         print("2. Global Settings")
-        print("3. Apply & Exit")
+        print("3. Exit")
         
         c = input("Choice: ")
         if c == '1': configure_interface()
         elif c == '2': configure_global()
         elif c == '3':
-            print("Applying changes...")
-            subprocess.run([sys.executable, ENFORCE_SCRIPT])
             break
 
 if __name__ == "__main__":
