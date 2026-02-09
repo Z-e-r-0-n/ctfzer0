@@ -15,7 +15,7 @@ DNSMASQ_CONF_DIR = "/etc/dnsmasq.d"
 def write_file(path, content):
     with open(path, "w") as f:
         f.write(content)
-    os.chmod(path, 0o600)
+    os.chmod(path, 0o666)
 
 def run(cmd):
     subprocess.run(cmd, shell=True, check=False)
@@ -112,16 +112,9 @@ network={{
                 write_file(f"{WPA_SUPPLICANT_DIR}/wpa_supplicant-{iface}.conf", wpa_content)
                 run(f"systemctl enable wpa_supplicant@{iface}")
                 run(f"systemctl restart wpa_supplicant@{iface}")
-            
-           
-            if role == "monitor":
-                run(f"ip link set {iface} down")
-                run(f"iw dev {iface} set type monitor")
-                run(f"ip link set {iface} up")
-            else:
-                run(f"ip link set {iface} up")
-                run(f"ip link set {iface} promisc on")
 
+       
+        
 
     downlink_index = 0
     for fpath in intent_files:
