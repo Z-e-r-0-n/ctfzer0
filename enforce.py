@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+import os
+import subprocess
+import glob
+import shutil
+import time
+
+INTENT_DIR = "/etc/net/interfaces"
+GLOBAL_CONF = "/etc/net/global.conf"
+
+SYSTEMD_NET_DIR = "/etc/systemd/network"
+WPA_SUPPLICANT_DIR = "/etc/wpa_supplicant"
+HOSTAPD_CONF_DIR = "/etc/hostapd"
+DNSMASQ_CONF_DIR = "/etc/dnsmasq.d"
+
+def write_file(path, content):
+    with open(path, "w") as f:
+        f.write(content)
+    os.chmod(path, 0o666)
+
+def run(cmd):
+    subprocess.run(cmd, shell=True, check=False)
+
+def clean_slate():
+    print("[*] Cleaning old configurations...")
+    
+    for f in glob.glob(f"{SYSTEMD_NET_DIR}/*-enforced.network"):
+        os.remove(f)
+    
+   
+    run("systemctl stop hostapd")
+    run("pkill hostapd") 
+    run("systemctl stop dnsmasq")
+    
+    for f in glob.glob(f"{HOSTAPD_CONF_DIR}/*.conf"):
+        os.remove(f)
+    for f in glob.glob(f"{DNSMASQ_CONF_DIR}/*.conf"):
+        os.remove(f)
+
+    # Clean wpa_supplicant
+    run("pkill wpa_supplicant")
+
+def parse_intent(path):
+    config = {}
+    if not os.path.exists(path): return config
+    with open(path) as f:
+        for line in f:
+            if "=" in line:
+                k, v = line.strip().split("=", 1)
+                config[k] = v
+    return config
+
+def apply_global():
+    print("[*] Applying Global Settings...")
+    forward = "0"
+    if os.path.exists(GLOBAL_CONF):
+        with open(GLOBAL_CONF) as f:
+            if "ip_forward=1" in f.read():
+                forward = "1"
+    run(f"sysctl -w net.ipv4.ip_forward={forward}")
+    return forward == "1"
+
+def generate_subnet(index):
+    return f"10.0.{50 + index}.1"
+
+def main():
+    clean_slate()
+    ip_forwarding_enabled = apply_global()
+    
+    intent_files = glob.glob(f"{INTENT_DIR}/*.conf")
+    uplink_interfaces = [] 
+    
+    
+    for fpath in intent_files:
+        iface = os.path.basename(fpath).replace(".conf", "")
+        cfg = parse_intent(fpath)
+        role = cfg.get("role")
+
+        
+        if role == "uplink":
+            uplink_interfaces.append(iface)
+            
+           
+            metric = 200 
+            if "et" in iface: metric = 100
+            if "en" in iface: metric = 100
+            if "wl" in iface: metric = 300 
+
+            print(f"[+] Configuring {iface} as UPLINK (Metric: {metric})")
+            
+            net_content = f"""[Match]
+Name={iface}
+
+[Network]
+DHCP=yes
+IPMasquerade=yes 
+
+[DHCPv4]
+RouteMetric={metric}
+"""
+            write_file(f"{SYSTEMD_NET_DIR}/10-{iface}-uplink-enforced.network", net_content)
+            
+            if "ssid" in cfg:
+                wpa_content = f"""ctrl_interface=/run/wpa_supplicant
+update_config=1
+country=IN
+
+network={{
+    ssid="{cfg['ssid']}"
+    psk="{cfg['psk']}"
+}}
+"""
+                write_file(f"{WPA_SUPPLICANT_DIR}/wpa_supplicant-{iface}.conf", wpa_content)
+                run(f"systemctl enable wpa_supplicant@{iface}")
+                run(f"systemctl restart wpa_supplicant@{iface}")
+
+       
+        elif role == "promiscous" or role == "monitor":
+            print(f"[+] Configuring {iface} as MONITOR/PROMISC")
+            
+            
+            net_content = f"""[Match]
+Name={iface}
+
+[Link]
+Unmanaged=yes
+"""
+            write_file(f"{SYSTEMD_NET_DIR}/90-{iface}-monitor-enforced.network", net_content)
+            
+           
+            if role == "monitor":
+                run(f"ip link set {iface} down")
+                run(f"iw dev {iface} set type monitor")
+                run(f"ip link set {iface} up")
+            else:
+                run(f"ip link set {iface} up")
+                run(f"ip link set {iface} promisc on")
+
+
+    downlink_index = 0
+    for fpath in intent_files:
+        iface = os.path.basename(fpath).replace(".conf", "")
+        cfg = parse_intent(fpath)
+        
+        if cfg.get("role") == "downlink":
+            print(f"[+] Configuring {iface} as DOWNLINK")
+            
+            gw_ip = generate_subnet(downlink_index)
+            dhcp_range = f"{gw_ip.rsplit('.', 1)[0]}.10,{gw_ip.rsplit('.', 1)[0]}.100,12h"
+            downlink_index += 1
+            
+            net_content = f"""[Match]
+Name={iface}
+
+[Network]
+Address={gw_ip}/24
+IPMasquerade=yes
+DHCPServer=no
+"""
+            write_file(f"{SYSTEMD_NET_DIR}/20-{iface}-downlink-enforced.network", net_content)
+            
+            if "ssid" in cfg:
+                hostapd_conf = f"{HOSTAPD_CONF_DIR}/{iface}.conf"
+                hostapd_content = f"""interface={iface}
+driver=nl80211
+ssid={cfg['ssid']}
+hw_mode=g
+channel=7
+wmm_enabled=0
+macaddr_acl=0
+auth_algs=1
+ignore_broadcast_ssid=0
+wpa=2
+wpa_passphrase={cfg['psk']}
+wpa_key_mgmt=WPA-PSK
+wpa_pairwise=TKIP
+rsn_pairwise=CCMP
+"""
+                write_file(hostapd_conf, hostapd_content)
+                run(f"systemctl unmask hostapd")
+                run(f"hostapd -B {hostapd_conf}") 
+
+            
+            dnsmasq_content = f"""interface={iface}
+bind-interfaces
+dhcp-range={dhcp_range}
+dhcp-option=3,{gw_ip}
+dhcp-option=6,{gw_ip}
+server=127.0.0.53
+"""
+            write_file(f"{DNSMASQ_CONF_DIR}/{iface}.conf", dnsmasq_content)
+
+   
+    print("[*] Reloading systemd-networkd...")
+    run("systemctl daemon-reload")
+    run("networkctl reload")
+    
+    if downlink_index > 0:
+        print("[*] Starting DNS/DHCP services...")
+        run("systemctl restart dnsmasq")
+        
+    if ip_forwarding_enabled and uplink_interfaces:
+        print("[*] Enabling NAT rules...")
+     
+        
+        for up_iface in uplink_interfaces:
+            print(f"    -> Masquerading for {up_iface}")
+            run(f"iptables -t nat -A POSTROUTING -o {up_iface} -j MASQUERADE")
+
+if __name__ == "__main__":
+    if os.geteuid() != 0:
+        print("Run as root.")
+        exit(1)
+    main()
