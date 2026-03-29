@@ -1,0 +1,49 @@
+1. Pre-Flight & Initialization
+
+Before doing any networking, the program ensures the environment is correct.
+
+    Root Check: Verifies the user is running the script with sudo or as root.
+
+    Constants Definition: Sets the paths for the config directory (/etc/net/interfaces), global config (/etc/net/global.conf), and the execution script.
+
+2. Information Gathering (Read State)
+
+The program queries the Linux kernel and hardware for current network data.
+
+    List Interfaces: Executes ip -o link show, parses the text to extract interface names (eth0, wlan0), and filters out the loopback (lo) interface.
+
+    WiFi Scanning: * Brings the selected interface "UP".
+
+        Executes iwlist scan.
+
+        Parses the raw text output to extract unique ESSID (WiFi network names).
+
+3. The Interactive Interface (Control Flow)
+
+An infinite loop (while True) that keeps presenting a menu until the user exits.
+
+    Main Menu: Route to Interface Config, Global Config, or Exit.
+
+    Interface Selection: Dynamically numbers the available interfaces for the user to pick from.
+
+    Role Configuration Logic:
+
+        Uplink (Client): Asks if it's WiFi. If yes, offers to scan or input manually, then asks for the password.
+
+        Downlink (Hotspot): Asks for a new SSID and Password to broadcast.
+
+        Promiscuous: Just sets the role flag.
+
+        Clear: Deletes the specific configuration file for that interface.
+
+4. State Management (Write State)
+
+This is where the user's choices are committed to disk.
+
+    Global Config: Reads /etc/net/global.conf to check if IP forwarding is on. Writes ip_forward=1 or 0 based on user input.
+
+    Interface Config: Creates /etc/net/interfaces/ if it doesn't exist. Writes the collected data (role, ssid, psk) as key-value pairs into a .conf file named after the interface (e.g., wlan0.conf).
+
+5. Execution Trigger
+
+    Apply Changes: Asks the user if they want to apply the new configuration. If yes, it executes the external /usr/lib/net/enforce.py script.
