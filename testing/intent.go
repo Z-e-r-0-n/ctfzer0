@@ -25,7 +25,7 @@ type network_config struct {
 
 const intent_dir string = "/etc/net/interfaces"
 const global_conf string = "/etc/net/global.conf"
-const enforcer string = "/usr/lib/net/enforce.py"
+const enforcer string = "/usr/lib/net/enforce"
 
 func dump_global(filepa string, config global_config) {
 	file, err := os.OpenFile(filepa, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
@@ -239,6 +239,11 @@ func main() {
 		} else {
 			break
 		}
-	}
 
+	}
+	c := exec.Command(enforcer)
+	err := c.Run()
+	if err != nil {
+		fmt.Println("Couldnt call enforce")
+	}
 }
