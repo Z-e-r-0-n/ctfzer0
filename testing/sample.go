@@ -20,6 +20,7 @@ type network_config struct {
 	Ps              string
 	Ssid            string
 	Subnet          string
+	Name            string
 }
 
 const intent_dir string = "/etc/net/interfaces"
@@ -167,6 +168,7 @@ func main() {
 			fmt.Println("your option (1,2,3 ..)")
 			fmt.Scanln(&choice4)
 			var netwo_conf network_config
+			netwo_conf.Name = curr_iface
 			if choice4 == 1 {
 				netwo_conf.Role = "uplink"
 				if strings.HasPrefix(curr_iface, "w") {
