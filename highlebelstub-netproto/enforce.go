@@ -216,7 +216,6 @@ func main() {
 			}
 			dnsmasq_content := fmt.Sprintf("interface=%s\nbind-interfaces\ndhcp-range=%s\ndhcp-option=3,%s\ndhcp-option=6,%s\nserver=127.0.0.53\n", iface, dhcp_range, gw_ip, gw_ip)
 			write_file(fmt.Sprintf("%s/%s.conf", dnsmasq_conf_dir, iface), dnsmasq_content)
-			downlink_index++
 
 		case "unmanaged":
 			fmt.Printf("configuring %s as UNMANAGED\n", iface)

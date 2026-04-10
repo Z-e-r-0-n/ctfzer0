@@ -114,7 +114,15 @@ func scan_wifi(interfa string) []string {
 	final := []string{}
 	slice := strings.Split(text, "\n")
 	for _, line := range slice {
-		final = append(final, strings.TrimSpace(strings.Split(line, ":")[1]))
+		parts := strings.SplitN(strings.TrimSpace(line), ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		ssid := strings.Trim(parts[1], "\" ")
+		if ssid == "" {
+			continue
+		}
+		final = append(final, ssid)
 	}
 	return final
 }
@@ -208,6 +216,7 @@ func main() {
 			} else if choice4 == 2 {
 				netwo_conf.Role = "downlink"
 				if strings.HasPrefix(curr_iface, "w") {
+					netwo_conf.Wireless_status = "y"
 					var choice6 string
 					fmt.Println("enter ssid for hotspot")
 					fmt.Scanln(&choice6)
